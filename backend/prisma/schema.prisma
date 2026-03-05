@@ -1,0 +1,71 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Brand {
+  id                String       @id @default(uuid())
+  brand_name        String
+  owner_name        String
+  email             String       @unique
+  phone             String
+  password_hash     String
+  orders_per_day    String?
+  created_at        DateTime     @default(now())
+
+  orders            Order[]
+  integrations      Integration?
+}
+
+model Order {
+  id                String       @id @default(uuid())
+  brand_id          String
+  order_number      String
+  customer_name     String
+  phone             String
+  product_name      String
+  product_color     String?
+  price             Float
+  address           String
+  source_platform   String
+  status            String       @default("pending") // pending, confirmed, cancelled
+  created_at        DateTime     @default(now())
+  confirmed_at      DateTime?
+
+  brand             Brand        @relation(fields: [brand_id], references: [id])
+  messages          Message[]
+}
+
+model Message {
+  id                String       @id @default(uuid())
+  order_id          String
+  phone             String
+  message           String
+  message_type      String       // system, customer
+  created_at        DateTime     @default(now())
+
+  order             Order        @relation(fields: [order_id], references: [id])
+}
+
+model Integration {
+  id                           String       @id @default(uuid())
+  brand_id                     String       @unique
+  shopify_api_key              String?
+  wordpress_webhook            String?
+  custom_api_key               String?      @unique
+  whatsapp_connected           Boolean      @default(false)
+  
+  meta_app_id                  String?
+  meta_phone_number_id         String?
+  meta_access_token            String?
+  meta_business_account_id     String?
+
+  brand                        Brand        @relation(fields: [brand_id], references: [id])
+}
