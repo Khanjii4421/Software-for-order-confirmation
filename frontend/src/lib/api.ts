@@ -1,7 +1,14 @@
 import axios from 'axios';
 
+const isServer = typeof window === 'undefined';
+let apiURL = process.env.NEXT_PUBLIC_API_URL || '/api';
+
+if (isServer && apiURL.startsWith('/')) {
+    apiURL = `http://localhost:8080${apiURL}`;
+}
+
 const api = axios.create({
-    baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api',
+    baseURL: apiURL,
 });
 
 // Request interceptor to add token

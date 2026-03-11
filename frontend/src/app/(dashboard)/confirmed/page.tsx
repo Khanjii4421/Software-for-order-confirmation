@@ -3,7 +3,8 @@
 import { useState, useEffect } from "react";
 import api from "@/lib/api";
 import { format } from "date-fns";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle, Search, Download, ExternalLink } from "lucide-react";
+import { PremiumCard } from "@/components/ui/PremiumComponents";
 
 export default function ConfirmedOrdersPage() {
     const [orders, setOrders] = useState([]);
@@ -24,67 +25,115 @@ export default function ConfirmedOrdersPage() {
     }, []);
 
     if (loading) {
-        return <div className="flex justify-center items-center h-64"><Loader2 className="animate-spin w-8 h-8 text-indigo-600" /></div>;
+        return (
+            <div className="flex flex-col justify-center items-center h-[60vh] space-y-4">
+                <Loader2 className="animate-spin w-10 h-10 text-indigo-600" />
+                <p className="text-slate-500 font-medium">Loading confirmed database...</p>
+            </div>
+        );
     }
 
     return (
-        <div className="space-y-6 flex flex-col h-[calc(100vh-120px)]">
-            <div>
-                <h1 className="text-2xl font-bold text-gray-900">Confirmed Orders</h1>
-                <p className="mt-1 text-sm text-gray-500">List of orders confirmed by customers via WhatsApp.</p>
+        <div className="space-y-8">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-3xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                        Confirmed Orders
+                        <div className="px-3 py-1 bg-emerald-100 text-emerald-600 rounded-lg text-xs font-black uppercase tracking-widest">Verified</div>
+                    </h1>
+                    <p className="text-slate-500 font-medium mt-1">Export your confirmed orders for fulfillment and shipping.</p>
+                </div>
+                <div className="flex items-center space-x-3">
+                    <button className="flex items-center space-x-2 px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100">
+                        <Download className="w-4 h-4" />
+                        <span>Export CSV</span>
+                    </button>
+                </div>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 flex-1 overflow-hidden flex flex-col">
-                <div className="overflow-x-auto flex-1">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50 sticky top-0">
-                            <tr>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer Name</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Address</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Color</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Price</th>
-                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Confirmed Date</th>
+            <PremiumCard className="p-0 overflow-hidden border-none" delay={0.1}>
+                <div className="p-6 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div className="relative flex-1 max-w-sm">
+                        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                        <input
+                            type="text"
+                            placeholder="Search confirmed orders..."
+                            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border-none rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 transition-all outline-none text-slate-600 font-medium"
+                        />
+                    </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                    <table className="w-full">
+                        <thead>
+                            <tr className="bg-slate-50/50 text-[11px] font-bold text-slate-400 uppercase tracking-widest">
+                                <th className="px-6 py-4 text-left">Customer</th>
+                                <th className="px-6 py-4 text-left">Contact</th>
+                                <th className="px-6 py-4 text-left">Delivery Address</th>
+                                <th className="px-6 py-4 text-left">Order Details</th>
+                                <th className="px-6 py-4 text-left">Amount</th>
+                                <th className="px-6 py-4 text-left">Confirmed At</th>
+                                <th className="px-6 py-4 text-right"></th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
+                        <tbody className="divide-y divide-slate-100">
                             {orders.map((order: any) => (
-                                <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-l-4 border-l-green-500">
-                                        {order.customer_name}
+                                <tr key={order.id} className="hover:bg-emerald-50/30 transition-colors group">
+                                    <td className="px-6 py-5 whitespace-nowrap">
+                                        <div className="flex items-center space-x-3">
+                                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-bold text-xs uppercase">
+                                                {order.customer_name.charAt(0)}
+                                            </div>
+                                            <span className="text-sm font-bold text-slate-900">{order.customer_name}</span>
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    <td className="px-6 py-5 whitespace-nowrap text-sm text-slate-600 font-medium">
                                         {order.phone}
                                     </td>
-                                    <td className="px-6 py-4 text-sm text-gray-500 truncate max-w-[200px]" title={order.address}>
-                                        {order.address}
+                                    <td className="px-6 py-5 text-sm text-slate-500 max-w-[200px]">
+                                        <p className="truncate font-medium" title={order.address}>{order.address}</p>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-medium">
-                                        {order.product_name}
+                                    <td className="px-6 py-5 whitespace-nowrap">
+                                        <div className="flex flex-col">
+                                            <span className="text-sm font-bold text-slate-800">{order.product_name}</span>
+                                            <span className="text-[10px] text-slate-400 font-black uppercase tracking-tight">{order.product_color || "Standard"}</span>
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {order.product_color || "N/A"}
+                                    <td className="px-6 py-5 whitespace-nowrap">
+                                        <span className="text-sm font-black text-slate-900">{order.price}</span>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-bold">
-                                        {order.price}
+                                    <td className="px-6 py-5 whitespace-nowrap">
+                                        <div className="flex flex-col">
+                                            <span className="text-xs font-bold text-emerald-600">
+                                                {order.confirmed_at ? format(new Date(order.confirmed_at), 'MMM d, yyyy') : 'N/A'}
+                                            </span>
+                                            <span className="text-[10px] text-slate-400 font-medium tracking-tight">
+                                                {order.confirmed_at ? format(new Date(order.confirmed_at), 'hh:mm a') : ''}
+                                            </span>
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-green-600 font-medium whitespace-nowrap">
-                                        {order.confirmed_at ? format(new Date(order.confirmed_at), 'PPP pp') : 'N/A'}
+                                    <td className="px-6 py-5 whitespace-nowrap text-right">
+                                        <button className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-all shadow-sm border border-transparent hover:border-slate-100">
+                                            <ExternalLink className="w-4 h-4" />
+                                        </button>
                                     </td>
                                 </tr>
                             ))}
-                            {orders.length === 0 && (
-                                <tr>
-                                    <td colSpan={7} className="px-6 py-12 text-center text-gray-500">
-                                        No confirmed orders yet.
-                                    </td>
-                                </tr>
-                            )}
                         </tbody>
                     </table>
                 </div>
-            </div>
+
+                {orders.length === 0 && (
+                    <div className="py-24 flex flex-col items-center justify-center text-center">
+                        <div className="w-20 h-20 bg-emerald-50 rounded-full flex items-center justify-center mb-6">
+                            <CheckCircle className="w-10 h-10 text-emerald-200" />
+                        </div>
+                        <h3 className="text-xl font-bold text-slate-900">No confirmed orders yet</h3>
+                        <p className="text-slate-500 max-w-sm mt-2 font-medium">Orders will appear here once customers confirm them via the WhatsApp automated message.</p>
+                    </div>
+                )}
+            </PremiumCard>
         </div>
     );
 }
+

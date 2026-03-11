@@ -6,7 +6,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "sqlite"
   url      = env("DATABASE_URL")
 }
 
@@ -22,6 +22,8 @@ model Brand {
 
   orders            Order[]
   integrations      Integration?
+  aiConfig          AIBotConfig?
+  aiOrders          AIOrder[]
 }
 
 model Order {
@@ -66,6 +68,95 @@ model Integration {
   meta_phone_number_id         String?
   meta_access_token            String?
   meta_business_account_id     String?
+  meta_template_name           String?
 
   brand                        Brand        @relation(fields: [brand_id], references: [id])
+}
+
+// AI Bot Configuration
+model AIBotConfig {
+  id                    String       @id @default(uuid())
+  brand_id              String       @unique
+  
+  // OpenAI Config
+  openai_api_key        String?
+  ai_model              String       @default("gpt-4o-mini")
+  
+  // WhatsApp Config (Meta Cloud API)
+  wa_phone_number_id    String?
+  wa_access_token       String?
+  wa_verify_token       String?      @default("ai_bot_secret")
+  
+  // Bot Behavior
+  bot_enabled           Boolean      @default(false)
+  ai_personality        String?      @default("friendly")
+  custom_prompt         String?
+  
+  // Product Info
+  product_name          String?
+  product_description   String?
+  product_price         Float?
+  product_min_price     Float?       // Minimum price for negotiation
+  currency              String?      @default("PKR")
+  
+  created_at            DateTime     @default(now())
+  updated_at            DateTime     @updatedAt
+
+  brand                 Brand        @relation(fields: [brand_id], references: [id])
+  productImages         ProductImage[]
+  conversations         AIConversation[]
+}
+
+// Product Images for AI to send
+model ProductImage {
+  id              String       @id @default(uuid())
+  bot_config_id   String
+  image_url       String       // stored path/URL
+  image_name      String?
+  display_order   Int          @default(0)
+  created_at      DateTime     @default(now())
+
+  botConfig       AIBotConfig  @relation(fields: [bot_config_id], references: [id])
+}
+
+// AI Conversation sessions
+model AIConversation {
+  id              String       @id @default(uuid())
+  bot_config_id   String
+  customer_phone  String
+  customer_name   String?
+  city            String?
+  address         String?
+  stage           String       @default("greeting") // greeting, name, city, address, product_info, negotiation, confirmed
+  messages        String       @default("[]") // JSON array of {role, content, timestamp}
+  created_at      DateTime     @default(now())
+  updated_at      DateTime     @updatedAt
+
+  botConfig       AIBotConfig  @relation(fields: [bot_config_id], references: [id])
+  aiOrder         AIOrder?
+}
+
+// WhatsApp AI Orders
+model AIOrder {
+  id                  String       @id @default(uuid())
+  brand_id            String
+  conversation_id     String?      @unique
+  
+  customer_name       String
+  customer_phone      String
+  city                String?
+  address             String?
+  
+  product_name        String?
+  product_image_url   String?
+  final_price         Float?
+  
+  status              String       @default("confirmed") // confirmed, cancelled
+  confirmation_sent   Boolean      @default(false)
+  confirmation_sent_at DateTime?
+  
+  created_at          DateTime     @default(now())
+
+  brand               Brand        @relation(fields: [brand_id], references: [id])
+  conversation        AIConversation? @relation(fields: [conversation_id], references: [id])
 }

@@ -128,18 +128,19 @@ const wordpressWebhook = async (req, res) => {
 };
 
 const updateMeta = async (req, res) => {
-    const { meta_app_id, meta_phone_number_id, meta_access_token, meta_business_account_id } = req.body;
+    const { meta_app_id, meta_phone_number_id, meta_access_token, meta_business_account_id, meta_template_name } = req.body;
     try {
         const integration = await prisma.integration.upsert({
             where: { brand_id: req.user.id },
-            update: { meta_app_id, meta_phone_number_id, meta_access_token, meta_business_account_id },
-            create: { brand_id: req.user.id, meta_app_id, meta_phone_number_id, meta_access_token, meta_business_account_id }
+            update: { meta_app_id, meta_phone_number_id, meta_access_token, meta_business_account_id, meta_template_name },
+            create: { brand_id: req.user.id, meta_app_id, meta_phone_number_id, meta_access_token, meta_business_account_id, meta_template_name }
         });
         res.json(integration);
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
 };
+
 
 module.exports = {
     getIntegrations,
