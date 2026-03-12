@@ -2,24 +2,31 @@ const express = require('express');
 const router = express.Router();
 const {
     getIntegrations,
-    updateShopify,
-    updateWordpress,
     generateCustomKey,
     shopifyWebhook,
     wordpressWebhook,
-    updateMeta
+    updateMeta,
+    authorizeShopify,
+    shopifyCallback,
+    authorizeWordpress,
+    wordpressCallback
 } = require('../controllers/integrations');
 const authMiddleware = require('../middlewares/auth');
 
 router.get('/', authMiddleware, getIntegrations);
-router.put('/shopify', authMiddleware, updateShopify);
-router.put('/wordpress', authMiddleware, updateWordpress);
+
+// Shopify OAuth flow
+router.get('/shopify/authorize', authMiddleware, authorizeShopify);
+router.get('/shopify/callback', shopifyCallback);
+router.post('/shopify/orders/:brandId', shopifyWebhook); // webhook from Shopify
+
+// WordPress OAuth flow
+router.get('/wordpress/authorize', authMiddleware, authorizeWordpress);
+router.get('/wordpress/callback', wordpressCallback);
+router.post('/wordpress/orders/:brandId', wordpressWebhook); // webhook from WooCommerce
+
+// Other integrations
 router.put('/meta', authMiddleware, updateMeta);
 router.post('/custom-key', authMiddleware, generateCustomKey);
-
-// Webhooks (No auth middleware as they are called by external platforms)
-// Using identifier in URL to identify the brand
-router.post('/shopify/orders/:brandId', shopifyWebhook);
-router.post('/wordpress/orders/:brandId', wordpressWebhook);
 
 module.exports = router;

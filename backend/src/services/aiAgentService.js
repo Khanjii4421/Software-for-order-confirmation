@@ -1,4 +1,5 @@
-const prisma = require('../db');
+const { getDB } = require('../db');
+const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 
 // ──────────────────────────────────────────────
@@ -44,10 +45,7 @@ const sendWAText = async (phoneNumberId, accessToken, to, text) => {
 // Send WhatsApp Image via Meta Cloud API
 // ──────────────────────────────────────────────
 const sendWAImage = async (phoneNumberId, accessToken, to, imageUrl) => {
-    // If imageUrl looks like a relative path (from local upload), skip sending image via API
-    // In production this would be a publicly accessible URL
     if (!imageUrl.startsWith('http')) return;
-
     const url = `https://graph.facebook.com/v18.0/${phoneNumberId}/messages`;
     const body = {
         messaging_product: 'whatsapp',
@@ -116,38 +114,7 @@ ${customPrompt ? `ADDITIONAL INSTRUCTIONS:\n${customPrompt}` : ''}`;
 };
 
 // ──────────────────────────────────────────────
-// Extract data from AI conversation
-// ──────────────────────────────────────────────
-const extractConversationData = (messages, currentConv) => {
-    // Simple extraction: look at the full conversation for name/city/address hints
-    // In production you'd use NLP or structured prompts
-    let name = currentConv.customer_name || null;
-    let city = currentConv.city || null;
-    let address = currentConv.address || null;
-
-    // The AI is instructed to collect these; we parse them from the conversation context
-    // Better approach: use a separate extraction call to OpenAI
-    return { name, city, address };
-};
-
-// ──────────────────────────────────────────────
-// Determine next conversation stage
-// ──────────────────────────────────────────────
-const determineStage = (currentStage, customerMsg, aiReply, convData) => {
-    const msg = customerMsg.toLowerCase();
-
-    if (aiReply.includes('[ORDER_CONFIRMED]')) return 'confirmed';
-
-    // Progress through stages based on data collected
-    if (!convData.customer_name) return 'collect_name';
-    if (!convData.city) return 'collect_city';
-    if (!convData.address) return 'collect_address';
-
-    return 'negotiation_or_confirm';
-};
-
-// ──────────────────────────────────────────────
-// Extract data from messages using a regex approach
+// Parse customer data from the full conversation
 // ──────────────────────────────────────────────
 const parseCustomerDataFromMessages = async (config, messages) => {
     if (!config.openai_api_key || messages.length < 2) return {};
@@ -156,8 +123,7 @@ const parseCustomerDataFromMessages = async (config, messages) => {
         const extractionPrompt = [
             {
                 role: 'system',
-                content: `Extract customer information from this WhatsApp conversation. Return a JSON object with these fields (null if not found): {"customer_name": string|null, "city": string|null, "address": string|null, "agreed_price": number|null}.
-Only extract information the customer explicitly provided. Do not guess.`
+                content: `Extract customer information from this WhatsApp conversation. Return a JSON object with these fields (null if not found): {"customer_name": string|null, "city": string|null, "address": string|null, "agreed_price": number|null}.\nOnly extract information the customer explicitly provided. Do not guess.`
             },
             {
                 role: 'user',
@@ -166,7 +132,6 @@ Only extract information the customer explicitly provided. Do not guess.`
         ];
 
         const result = await callOpenAI(config.openai_api_key, config.ai_model, extractionPrompt);
-        // Parse JSON from response
         const jsonMatch = result.match(/\{[\s\S]*\}/);
         if (jsonMatch) return JSON.parse(jsonMatch[0]);
     } catch (e) {
@@ -179,51 +144,64 @@ Only extract information the customer explicitly provided. Do not guess.`
 // MAIN: Process incoming WhatsApp message
 // ──────────────────────────────────────────────
 const processIncomingMessage = async (phoneNumberId, customerPhone, customerMessage) => {
-    // 1. Find the AI bot config for this phone number
-    const config = await prisma.aIBotConfig.findFirst({
-        where: { wa_phone_number_id: phoneNumberId, bot_enabled: true },
-        include: { productImages: { orderBy: { display_order: 'asc' } } }
+    const db = getDB();
+
+    // 1. Find active bot config
+    const config = await db.collection('ai_bot_configs').findOne({
+        wa_phone_number_id: phoneNumberId,
+        bot_enabled: true
     });
 
     if (!config) {
         console.log(`[AI Agent] No active bot config for phoneId: ${phoneNumberId}`);
         return;
     }
-
     if (!config.openai_api_key) {
-        console.log(`[AI Agent] No OpenAI API key configured`);
+        console.log('[AI Agent] No OpenAI API key configured');
         return;
     }
 
-    // 2. Get or create conversation session
-    let conversation = await prisma.aIConversation.findFirst({
-        where: { bot_config_id: config.id, customer_phone: customerPhone },
-        orderBy: { updated_at: 'desc' }
-    });
+    // Get product images
+    const productImages = await db.collection('product_images')
+        .find({ bot_config_id: config.id })
+        .sort({ display_order: 1 })
+        .toArray();
+    config.productImages = productImages;
 
-    // If conversation is completed, start a new one
+    // 2. Get or create conversation session
+    let conversation = await db.collection('ai_conversations').findOne(
+        { bot_config_id: config.id, customer_phone: customerPhone },
+        { sort: { updated_at: -1 } }
+    );
+
     if (!conversation || conversation.stage === 'confirmed') {
-        conversation = await prisma.aIConversation.create({
-            data: {
-                bot_config_id: config.id,
-                customer_phone: customerPhone,
-                stage: 'greeting',
-                messages: JSON.stringify([])
-            }
-        });
+        const convId = uuidv4();
+        conversation = {
+            id: convId,
+            bot_config_id: config.id,
+            customer_phone: customerPhone,
+            customer_name: null,
+            city: null,
+            address: null,
+            stage: 'greeting',
+            messages: JSON.stringify([]),
+            created_at: new Date(),
+            updated_at: new Date()
+        };
+        await db.collection('ai_conversations').insertOne(conversation);
     }
 
-    // 3. Parse existing message history
+    // 3. Parse message history
     let messageHistory = JSON.parse(conversation.messages || '[]');
 
-    // 4. Add customer message to history
+    // 4. Add customer message
     messageHistory.push({
         role: 'user',
         content: customerMessage,
         timestamp: new Date().toISOString()
     });
 
-    // 5. Build messages for OpenAI
+    // 5. Build OpenAI messages
     const systemPrompt = buildSystemPrompt(config, conversation);
     const openAIMessages = [
         { role: 'system', content: systemPrompt },
@@ -239,43 +217,41 @@ const processIncomingMessage = async (phoneNumberId, customerPhone, customerMess
         return;
     }
 
-    // 7. Check if AI wants to send images
+    // 7. Parse special markers
     const shouldSendImages = aiReply.includes('[SEND_IMAGES]');
     const orderConfirmed = aiReply.includes('[ORDER_CONFIRMED]');
-
-    // Clean the reply (remove special markers)
     const cleanReply = aiReply.replace('[SEND_IMAGES]', '').replace('[ORDER_CONFIRMED]', '').trim();
 
-    // 8. Add AI reply to history
+    // 8. Add AI reply
     messageHistory.push({
         role: 'assistant',
         content: cleanReply,
         timestamp: new Date().toISOString()
     });
 
-    // 9. Extract customer data from full conversation
+    // 9. Extract customer data
     const customerData = await parseCustomerDataFromMessages(config, messageHistory);
     const updatedName = customerData.customer_name || conversation.customer_name;
     const updatedCity = customerData.city || conversation.city;
     const updatedAddress = customerData.address || conversation.address;
-
-    // 10. Determine new stage
     const newStage = orderConfirmed ? 'confirmed' : conversation.stage;
 
-    // 11. Update conversation in DB
-    await prisma.aIConversation.update({
-        where: { id: conversation.id },
-        data: {
-            messages: JSON.stringify(messageHistory),
-            customer_name: updatedName,
-            city: updatedCity,
-            address: updatedAddress,
-            stage: newStage,
-            updated_at: new Date()
+    // 10. Update conversation in DB
+    await db.collection('ai_conversations').updateOne(
+        { id: conversation.id },
+        {
+            $set: {
+                messages: JSON.stringify(messageHistory),
+                customer_name: updatedName,
+                city: updatedCity,
+                address: updatedAddress,
+                stage: newStage,
+                updated_at: new Date()
+            }
         }
-    });
+    );
 
-    // 12. Send reply via WhatsApp
+    // 11. Send reply via WhatsApp
     try {
         await sendWAText(config.wa_phone_number_id, config.wa_access_token, customerPhone, cleanReply);
     } catch (err) {
@@ -283,59 +259,60 @@ const processIncomingMessage = async (phoneNumberId, customerPhone, customerMess
         return;
     }
 
-    // 13. Send product images if requested
+    // 12. Send product images if requested
     if (shouldSendImages && config.productImages.length > 0) {
-        for (const img of config.productImages.slice(0, 3)) { // send max 3 images
+        for (const img of config.productImages.slice(0, 3)) {
             try {
                 await sendWAImage(config.wa_phone_number_id, config.wa_access_token, customerPhone, img.image_url);
-                await new Promise(r => setTimeout(r, 500)); // small delay between images
+                await new Promise(r => setTimeout(r, 500));
             } catch (e) {
                 console.error('[AI Agent] Image send error:', e.message);
             }
         }
     }
 
-    // 14. If order confirmed, create AI order record
+    // 13. If order confirmed, create AI order record
     if (orderConfirmed) {
-        const existingOrder = await prisma.aIOrder.findUnique({ where: { conversation_id: conversation.id } });
+        const existingOrder = await db.collection('ai_orders').findOne({ conversation_id: conversation.id });
 
         if (!existingOrder) {
-            const aiOrder = await prisma.aIOrder.create({
-                data: {
-                    brand_id: config.brand_id,
-                    conversation_id: conversation.id,
-                    customer_name: updatedName || 'Customer',
-                    customer_phone: customerPhone,
-                    city: updatedCity,
-                    address: updatedAddress,
-                    product_name: config.product_name,
-                    product_image_url: config.productImages[0]?.image_url || null,
-                    final_price: customerData.agreed_price || config.product_price,
-                    status: 'confirmed'
-                }
-            });
+            const aiOrderId = uuidv4();
+            const aiOrder = {
+                id: aiOrderId,
+                brand_id: config.brand_id,
+                conversation_id: conversation.id,
+                customer_name: updatedName || 'Customer',
+                customer_phone: customerPhone,
+                city: updatedCity,
+                address: updatedAddress,
+                product_name: config.product_name,
+                product_image_url: config.productImages[0]?.image_url || null,
+                final_price: customerData.agreed_price || config.product_price,
+                status: 'confirmed',
+                confirmation_sent: false,
+                confirmation_sent_at: null,
+                created_at: new Date()
+            };
 
-            console.log(`[AI Agent] ✅ Order confirmed! ID: ${aiOrder.id}`);
+            await db.collection('ai_orders').insertOne(aiOrder);
+            console.log(`[AI Agent] ✅ Order confirmed! ID: ${aiOrderId}`);
 
-            // Schedule confirmation message after 10 minutes
+            // Send confirmation message after 10 minutes
             setTimeout(async () => {
                 try {
                     const confirmMsg = `✅ *Order Confirmed!*\n\nThank you ${updatedName || 'for your order'}! Your order has been successfully placed. Our team will contact you shortly for delivery confirmation.\n\n📦 Product: ${config.product_name || 'Your order'}\n💰 Price: ${config.currency || 'PKR'} ${customerData.agreed_price || config.product_price || 'TBD'}\n📍 City: ${updatedCity || 'TBD'}\n\nThank you for choosing us! 🙏`;
 
                     await sendWAText(config.wa_phone_number_id, config.wa_access_token, customerPhone, confirmMsg);
 
-                    await prisma.aIOrder.update({
-                        where: { id: aiOrder.id },
-                        data: { confirmation_sent: true, confirmation_sent_at: new Date() }
-                    });
+                    await db.collection('ai_orders').updateOne(
+                        { id: aiOrderId },
+                        { $set: { confirmation_sent: true, confirmation_sent_at: new Date() } }
+                    );
                 } catch (e) {
                     console.error('[AI Agent] Confirmation message error:', e.message);
                 }
-            }, 10 * 60 * 1000); // 10 minutes
+            }, 10 * 60 * 1000);
         }
-
-        // Emit socket event for real-time update
-        // (io is available globally via app.get('io'))
     }
 
     console.log(`[AI Agent] Replied to ${customerPhone}: ${cleanReply.substring(0, 60)}...`);

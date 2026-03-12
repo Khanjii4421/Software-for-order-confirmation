@@ -1,13 +1,14 @@
-const prisma = require('../db');
-const { processNewOrder } = require('../services/orderService');
+const { getDB } = require('../db');
 const { v4: uuidv4 } = require('uuid');
+const { processNewOrder } = require('../services/orderService');
 
 const getOrders = async (req, res) => {
     try {
-        const orders = await prisma.order.findMany({
-            where: { brand_id: req.user.id },
-            orderBy: { created_at: 'desc' },
-        });
+        const db = getDB();
+        const orders = await db.collection('orders')
+            .find({ brand_id: req.user.id })
+            .sort({ created_at: -1 })
+            .toArray();
         res.json(orders);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -16,13 +17,11 @@ const getOrders = async (req, res) => {
 
 const getConfirmedOrders = async (req, res) => {
     try {
-        const orders = await prisma.order.findMany({
-            where: {
-                brand_id: req.user.id,
-                status: 'confirmed',
-            },
-            orderBy: { confirmed_at: 'desc' },
-        });
+        const db = getDB();
+        const orders = await db.collection('orders')
+            .find({ brand_id: req.user.id, status: 'confirmed' })
+            .sort({ confirmed_at: -1 })
+            .toArray();
         res.json(orders);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -31,15 +30,13 @@ const getConfirmedOrders = async (req, res) => {
 
 const createCustomOrder = async (req, res) => {
     const apiKey = req.headers['x-api-key'];
-
     if (!apiKey) {
         return res.status(401).json({ message: 'API key is missing' });
     }
 
     try {
-        const integration = await prisma.integration.findUnique({
-            where: { custom_api_key: apiKey },
-        });
+        const db = getDB();
+        const integration = await db.collection('integrations').findOne({ custom_api_key: apiKey });
 
         if (!integration) {
             return res.status(401).json({ message: 'Invalid API key' });

@@ -1,32 +1,33 @@
-const prisma = require('../db');
+const { getDB } = require('../db');
+const { v4: uuidv4 } = require('uuid');
 const fetch = require('node-fetch');
 
 // Meta Cloud API Logic
 const sendMetaMessage = async (integration, order) => {
     const { meta_phone_number_id, meta_access_token, meta_template_name } = integration;
-    const templateName = meta_template_name || "order_confirmation";
+    const templateName = meta_template_name || 'order_confirmation';
 
-    // Normalize phone number to E.164 (without +)
+    // Normalize phone number
     let phone = order.phone.replace(/[^0-9]/g, '');
     if (!phone.startsWith('92') && phone.startsWith('03')) phone = '92' + phone.substring(1);
 
     const url = `https://graph.facebook.com/v18.0/${meta_phone_number_id}/messages`;
 
     const body = {
-        messaging_product: "whatsapp",
-        recipient_type: "individual",
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
         to: phone,
-        type: "template",
+        type: 'template',
         template: {
             name: templateName,
-            language: { code: "en_US" },
+            language: { code: 'en_US' },
             components: [
                 {
-                    type: "body",
+                    type: 'body',
                     parameters: [
-                        { type: "text", text: order.customer_name },
-                        { type: "text", text: order.order_number },
-                        { type: "text", text: integration.brand.brand_name || "Our Shop" }
+                        { type: 'text', text: order.customer_name },
+                        { type: 'text', text: order.order_number },
+                        { type: 'text', text: integration.brand_name || 'Our Shop' }
                     ]
                 }
             ]
@@ -44,17 +45,17 @@ const sendMetaMessage = async (integration, order) => {
         });
 
         const data = await response.json();
-        if (data.error) {
-            throw new Error(data.error.message);
-        }
+        if (data.error) throw new Error(data.error.message);
 
-        await prisma.message.create({
-            data: {
-                order_id: order.id,
-                phone: order.phone,
-                message: `[Meta Template: ${templateName}]`,
-                message_type: 'system'
-            }
+        // Log message in DB
+        const db = getDB();
+        await db.collection('messages').insertOne({
+            id: uuidv4(),
+            order_id: order.id,
+            phone: order.phone,
+            message: `[Meta Template: ${templateName}]`,
+            message_type: 'system',
+            created_at: new Date()
         });
 
         return data;
@@ -65,36 +66,36 @@ const sendMetaMessage = async (integration, order) => {
 };
 
 const sendConfirmationMessage = async (order) => {
-    const brandId = order.brand_id;
+    try {
+        const db = getDB();
+        const integration = await db.collection('integrations').findOne({ brand_id: order.brand_id });
 
-    // Check if Meta is configured
-    const integration = await prisma.integration.findUnique({
-        where: { brand_id: brandId },
-        include: { brand: true }
-    });
+        if (integration && integration.meta_access_token && integration.meta_phone_number_id) {
+            // Get brand name
+            const brand = await db.collection('brands').findOne({ id: order.brand_id });
+            const integrationWithBrand = { ...integration, brand_name: brand?.brand_name };
 
-    if (integration && integration.meta_access_token && integration.meta_phone_number_id) {
-        try {
-            console.log(`Sending via Meta Cloud API for brand ${brandId}`);
-            return await sendMetaMessage(integration, order);
-        } catch (error) {
-            console.error("Meta API failed:", error);
-            throw error;
+            console.log(`Sending via Meta Cloud API for brand ${order.brand_id}`);
+            return await sendMetaMessage(integrationWithBrand, order);
+        } else {
+            console.log(`WhatsApp not configured for brand ${order.brand_id}`);
         }
-    } else {
-        console.log(`WhatsApp not configured for brand ${brandId}`);
+    } catch (error) {
+        console.error('sendConfirmationMessage Error:', error);
+        // Don't throw — order should still be saved even if WhatsApp fails
     }
 };
 
 const getStatus = async (brandId) => {
-    const integration = await prisma.integration.findUnique({ where: { brand_id: brandId } });
-
-    if (integration && integration.meta_access_token && integration.meta_phone_number_id) {
-        return { status: 'connected', type: 'meta' };
-    }
-
+    try {
+        const db = getDB();
+        const integration = await db.collection('integrations').findOne({ brand_id: brandId });
+        if (integration && integration.meta_access_token && integration.meta_phone_number_id) {
+            return { status: 'connected', type: 'meta' };
+        }
+    } catch (e) {}
     return { status: 'disconnected' };
-}
+};
 
 module.exports = {
     sendConfirmationMessage,

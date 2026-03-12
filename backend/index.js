@@ -6,8 +6,7 @@ const path = require('path');
 const { Server } = require('socket.io');
 require('dotenv').config();
 
-// Start cron service
-require('./src/services/cronService');
+const { connectDB } = require('./src/db');
 
 const app = express();
 const server = http.createServer(app);
@@ -15,7 +14,7 @@ const io = new Server(server, {
     cors: { origin: '*', methods: ['GET', 'POST'] }
 });
 
-app.set('io', io); // Attach io so we can use it in routes/services
+app.set('io', io);
 
 app.use(cors());
 app.use(express.json());
@@ -33,9 +32,8 @@ app.use('/api/integrations', require('./src/routes/integrations'));
 app.use('/api/orders', require('./src/routes/orders'));
 app.use('/api/brands', require('./src/routes/brands'));
 app.use('/api/dashboard', require('./src/routes/dashboard'));
+app.use('/api/whatsapp', require('./src/routes/whatsapp'));
 app.use('/api/webhooks', require('./src/routes/webhooks'));
-
-// AI Bot routes
 app.use('/api/ai-bot', require('./src/routes/aiBot'));
 
 io.on('connection', (socket) => {
@@ -44,6 +42,15 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+// Connect to MongoDB first, then start server
+connectDB().then(() => {
+    // Start cron service after DB is ready
+    require('./src/services/cronService');
+
+    server.listen(PORT, () => {
+        console.log(`🚀 Server running on port ${PORT}`);
+    });
+}).catch(err => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
 });

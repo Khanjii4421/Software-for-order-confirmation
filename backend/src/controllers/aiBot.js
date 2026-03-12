@@ -1,14 +1,26 @@
-const prisma = require('../db');
+const { getDB } = require('../db');
+const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 
 // ─── GET BOT CONFIG ────────────────────────────────────────
 const getBotConfig = async (req, res) => {
     try {
-        const config = await prisma.aIBotConfig.findUnique({
-            where: { brand_id: req.user.id },
-            include: { productImages: { orderBy: { display_order: 'asc' } } }
-        });
+        const db = getDB();
+        const config = await db.collection('ai_bot_configs').findOne(
+            { brand_id: req.user.id },
+            { projection: { _id: 0 } }
+        );
+
+        if (config) {
+            // Get product images
+            const productImages = await db.collection('product_images')
+                .find({ bot_config_id: config.id }, { projection: { _id: 0 } })
+                .sort({ display_order: 1 })
+                .toArray();
+            config.productImages = productImages;
+        }
+
         res.json(config || {});
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -18,58 +30,44 @@ const getBotConfig = async (req, res) => {
 // ─── SAVE BOT CONFIG ───────────────────────────────────────
 const saveBotConfig = async (req, res) => {
     const {
-        openai_api_key,
-        wa_phone_number_id,
-        wa_access_token,
-        wa_verify_token,
-        bot_enabled,
-        ai_personality,
-        custom_prompt,
-        product_name,
-        product_description,
-        product_price,
-        product_min_price,
-        currency,
-        ai_model
+        openai_api_key, wa_phone_number_id, wa_access_token, wa_verify_token,
+        bot_enabled, ai_personality, custom_prompt, product_name,
+        product_description, product_price, product_min_price, currency, ai_model
     } = req.body;
 
     try {
-        const config = await prisma.aIBotConfig.upsert({
-            where: { brand_id: req.user.id },
-            update: {
-                openai_api_key,
-                wa_phone_number_id,
-                wa_access_token,
-                wa_verify_token: wa_verify_token || 'ai_bot_secret',
-                bot_enabled: bot_enabled === true || bot_enabled === 'true',
-                ai_personality,
-                custom_prompt,
-                product_name,
-                product_description,
-                product_price: product_price ? parseFloat(product_price) : null,
-                product_min_price: product_min_price ? parseFloat(product_min_price) : null,
-                currency,
-                ai_model: ai_model || 'gpt-4o-mini',
-                updated_at: new Date()
-            },
-            create: {
-                brand_id: req.user.id,
-                openai_api_key,
-                wa_phone_number_id,
-                wa_access_token,
-                wa_verify_token: wa_verify_token || 'ai_bot_secret',
-                bot_enabled: bot_enabled === true || bot_enabled === 'true',
-                ai_personality,
-                custom_prompt,
-                product_name,
-                product_description,
-                product_price: product_price ? parseFloat(product_price) : null,
-                product_min_price: product_min_price ? parseFloat(product_min_price) : null,
-                currency,
-                ai_model: ai_model || 'gpt-4o-mini'
-            }
-        });
-        res.json({ success: true, config });
+        const db = getDB();
+        const existing = await db.collection('ai_bot_configs').findOne({ brand_id: req.user.id });
+        const configId = existing?.id || uuidv4();
+
+        const configData = {
+            id: configId,
+            brand_id: req.user.id,
+            openai_api_key,
+            wa_phone_number_id,
+            wa_access_token,
+            wa_verify_token: wa_verify_token || 'ai_bot_secret',
+            bot_enabled: bot_enabled === true || bot_enabled === 'true',
+            ai_personality,
+            custom_prompt,
+            product_name,
+            product_description,
+            product_price: product_price ? parseFloat(product_price) : null,
+            product_min_price: product_min_price ? parseFloat(product_min_price) : null,
+            currency,
+            ai_model: ai_model || 'gpt-4o-mini',
+            updated_at: new Date()
+        };
+
+        if (!existing) configData.created_at = new Date();
+
+        await db.collection('ai_bot_configs').updateOne(
+            { brand_id: req.user.id },
+            { $set: configData },
+            { upsert: true }
+        );
+
+        res.json({ success: true, config: configData });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -79,12 +77,13 @@ const saveBotConfig = async (req, res) => {
 const toggleBot = async (req, res) => {
     const { enabled } = req.body;
     try {
-        const config = await prisma.aIBotConfig.upsert({
-            where: { brand_id: req.user.id },
-            update: { bot_enabled: enabled, updated_at: new Date() },
-            create: { brand_id: req.user.id, bot_enabled: enabled }
-        });
-        res.json({ success: true, bot_enabled: config.bot_enabled });
+        const db = getDB();
+        await db.collection('ai_bot_configs').updateOne(
+            { brand_id: req.user.id },
+            { $set: { bot_enabled: enabled, updated_at: new Date() } },
+            { upsert: true }
+        );
+        res.json({ success: true, bot_enabled: enabled });
     } catch (error) {
         res.status(500).json({ message: error.message });
     }
@@ -93,27 +92,31 @@ const toggleBot = async (req, res) => {
 // ─── UPLOAD PRODUCT IMAGE ──────────────────────────────────
 const uploadProductImage = async (req, res) => {
     try {
-        // Ensure bot config exists
-        let config = await prisma.aIBotConfig.findUnique({ where: { brand_id: req.user.id } });
+        const db = getDB();
+        let config = await db.collection('ai_bot_configs').findOne({ brand_id: req.user.id });
         if (!config) {
-            config = await prisma.aIBotConfig.create({ data: { brand_id: req.user.id } });
+            const configId = uuidv4();
+            config = { id: configId, brand_id: req.user.id, created_at: new Date() };
+            await db.collection('ai_bot_configs').insertOne(config);
         }
 
         if (!req.file) {
             return res.status(400).json({ message: 'No file uploaded' });
         }
 
+        const imageId = uuidv4();
         const imageUrl = `/uploads/products/${req.file.filename}`;
 
-        const image = await prisma.productImage.create({
-            data: {
-                bot_config_id: config.id,
-                image_url: imageUrl,
-                image_name: req.file.originalname,
-                display_order: 0
-            }
-        });
+        const image = {
+            id: imageId,
+            bot_config_id: config.id,
+            image_url: imageUrl,
+            image_name: req.file.originalname,
+            display_order: 0,
+            created_at: new Date()
+        };
 
+        await db.collection('product_images').insertOne(image);
         res.json({ success: true, image });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -124,20 +127,20 @@ const uploadProductImage = async (req, res) => {
 const deleteProductImage = async (req, res) => {
     const { imageId } = req.params;
     try {
-        const config = await prisma.aIBotConfig.findUnique({ where: { brand_id: req.user.id } });
+        const db = getDB();
+        const config = await db.collection('ai_bot_configs').findOne({ brand_id: req.user.id });
         if (!config) return res.status(404).json({ message: 'Config not found' });
 
-        const image = await prisma.productImage.findFirst({
-            where: { id: imageId, bot_config_id: config.id }
+        const image = await db.collection('product_images').findOne({
+            id: imageId, bot_config_id: config.id
         });
 
         if (!image) return res.status(404).json({ message: 'Image not found' });
 
-        // Delete file from disk
         const filePath = path.join(__dirname, '../../public', image.image_url);
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
 
-        await prisma.productImage.delete({ where: { id: imageId } });
+        await db.collection('product_images').deleteOne({ id: imageId });
         res.json({ success: true });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -147,11 +150,11 @@ const deleteProductImage = async (req, res) => {
 // ─── GET AI ORDERS ─────────────────────────────────────────
 const getAIOrders = async (req, res) => {
     try {
-        const orders = await prisma.aIOrder.findMany({
-            where: { brand_id: req.user.id },
-            include: { conversation: true },
-            orderBy: { created_at: 'desc' }
-        });
+        const db = getDB();
+        const orders = await db.collection('ai_orders')
+            .find({ brand_id: req.user.id }, { projection: { _id: 0 } })
+            .sort({ created_at: -1 })
+            .toArray();
         res.json(orders);
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -162,14 +165,20 @@ const getAIOrders = async (req, res) => {
 const getAIOrderChat = async (req, res) => {
     const { orderId } = req.params;
     try {
-        const order = await prisma.aIOrder.findFirst({
-            where: { id: orderId, brand_id: req.user.id },
-            include: { conversation: true }
-        });
+        const db = getDB();
+        const order = await db.collection('ai_orders').findOne(
+            { id: orderId, brand_id: req.user.id },
+            { projection: { _id: 0 } }
+        );
 
         if (!order) return res.status(404).json({ message: 'Order not found' });
 
-        const messages = order.conversation ? JSON.parse(order.conversation.messages || '[]') : [];
+        let messages = [];
+        if (order.conversation_id) {
+            const convo = await db.collection('ai_conversations').findOne({ id: order.conversation_id });
+            messages = convo ? JSON.parse(convo.messages || '[]') : [];
+        }
+
         res.json({ order, messages });
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -179,14 +188,15 @@ const getAIOrderChat = async (req, res) => {
 // ─── GET ALL CONVERSATIONS ─────────────────────────────────
 const getConversations = async (req, res) => {
     try {
-        const config = await prisma.aIBotConfig.findUnique({ where: { brand_id: req.user.id } });
+        const db = getDB();
+        const config = await db.collection('ai_bot_configs').findOne({ brand_id: req.user.id });
         if (!config) return res.json([]);
 
-        const conversations = await prisma.aIConversation.findMany({
-            where: { bot_config_id: config.id },
-            orderBy: { updated_at: 'desc' },
-            take: 50
-        });
+        const conversations = await db.collection('ai_conversations')
+            .find({ bot_config_id: config.id }, { projection: { _id: 0 } })
+            .sort({ updated_at: -1 })
+            .limit(50)
+            .toArray();
         res.json(conversations);
     } catch (error) {
         res.status(500).json({ message: error.message });

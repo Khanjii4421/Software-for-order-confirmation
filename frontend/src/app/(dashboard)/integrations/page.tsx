@@ -13,63 +13,127 @@ import {
     ExternalLink,
     MessageSquare,
     ShieldCheck,
-    Link2,
     Zap,
-    AlertCircle,
     Facebook
 } from "lucide-react";
 import Link from "next/link";
 import { PremiumCard, PremiumButton } from "@/components/ui/PremiumComponents";
 
 export default function IntegrationsPage() {
-    const { user } = useAuth();
+    useAuth(); // ensures auth context is loaded
     const [integrations, setIntegrations] = useState<any>({});
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState({ shopify: false, wordpress: false, custom: false });
     const [copied, setCopied] = useState<string | null>(null);
 
-    const [shopifyKey, setShopifyKey] = useState("");
-    const [wordpressWebhook, setWordpressWebhook] = useState("");
+    const [shopifyDomain, setShopifyDomain] = useState("");
+    const [wordpressUrl, setWordpressUrl] = useState("");
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api';
     const displayApiUrl = typeof window !== 'undefined' ? (apiUrl.startsWith('/') ? window.location.origin + apiUrl : apiUrl) : 'http://localhost:8080/api';
 
+    // ── Popup OAuth Helper ──────────────────────────────────────────────────
+    const openOAuthPopup = (url: string, onSuccess: () => void) => {
+        const width = 560;
+        const height = 680;
+        const left = window.screenX + (window.outerWidth - width) / 2;
+        const top = window.screenY + (window.outerHeight - height) / 2;
+        const popup = window.open(
+            url,
+            'oauth_popup',
+            `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+        );
+
+        if (!popup) {
+            alert("Popup was blocked! Please allow popups for this site.");
+            return;
+        }
+
+        // Poll until popup closes
+        const timer = setInterval(() => {
+            if (popup.closed) {
+                clearInterval(timer);
+                onSuccess();
+            }
+        }, 500);
+    };
+
+    const fetchIntegrationsData = async () => {
+        try {
+            const { data } = await api.get("/integrations");
+            setIntegrations(data || {});
+            setShopifyDomain(data?.shopify_shop || "");
+            setWordpressUrl(data?.wordpress_site_url || "");
+        } catch (err) {
+            console.error("Failed to fetch integrations", err);
+        }
+    };
+
     useEffect(() => {
-        const fetchIntegrations = async () => {
+        const initialFetch = async () => {
             try {
                 const { data } = await api.get("/integrations");
                 setIntegrations(data || {});
-                setShopifyKey(data?.shopify_api_key || "");
-                setWordpressWebhook(data?.wordpress_webhook || "");
+                setShopifyDomain(data?.shopify_shop || "");
+                setWordpressUrl(data?.wordpress_site_url || "");
             } catch (err) {
                 console.error("Failed to fetch integrations", err);
             } finally {
                 setLoading(false);
             }
         };
-        fetchIntegrations();
+        initialFetch();
+
+        // Listen for signals from OAuth popup windows
+        const handleMessage = (event: MessageEvent) => {
+            if (
+                event.data === 'shopify_connected' ||
+                event.data === 'wordpress_connected'
+            ) {
+                // Popup has closed after successful auth — refresh data
+                fetchIntegrationsData();
+            }
+        };
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
     }, []);
 
-    const handleSaveShopify = async () => {
+    const handleConnectShopify = async () => {
+        if (!shopifyDomain) return alert("Please enter your Shopify shop domain (e.g. mystore.myshopify.com)");
         setSaving({ ...saving, shopify: true });
         try {
-            await api.put("/integrations/shopify", { shopify_api_key: shopifyKey });
-            setIntegrations({ ...integrations, shopify_api_key: shopifyKey });
+            const { data } = await api.get(`/integrations/shopify/authorize?shop=${shopifyDomain}`);
+            if (data.url) {
+                openOAuthPopup(data.url, () => {
+                    // Popup closed — re-fetch to reflect new connection status
+                    fetchIntegrationsData();
+                    setSaving(s => ({ ...s, shopify: false }));
+                });
+            }
         } catch (err) {
             console.error(err);
+            alert("Failed to start Shopify connection.");
         } finally {
-            setSaving({ ...saving, shopify: false });
+            setSaving(s => ({ ...s, shopify: false }));
         }
     };
 
-    const handleSaveWordpress = async () => {
+    const handleConnectWordpress = async () => {
+        if (!wordpressUrl) return alert("Please enter your WordPress site URL (e.g. https://mystore.com)");
         setSaving({ ...saving, wordpress: true });
         try {
-            await api.put("/integrations/wordpress", { wordpress_webhook: wordpressWebhook });
-            setIntegrations({ ...integrations, wordpress_webhook: wordpressWebhook });
+            const { data } = await api.get(`/integrations/wordpress/authorize?site=${wordpressUrl}`);
+            if (data.url) {
+                openOAuthPopup(data.url, () => {
+                    // Popup closed — re-fetch to reflect new connection status
+                    fetchIntegrationsData();
+                    setSaving(s => ({ ...s, wordpress: false }));
+                });
+            }
         } catch (err) {
             console.error(err);
+            alert("Failed to start WordPress connection.");
         } finally {
-            setSaving({ ...saving, wordpress: false });
+            setSaving(s => ({ ...s, wordpress: false }));
         }
     };
 
@@ -114,125 +178,130 @@ export default function IntegrationsPage() {
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                 {/* Shopify */}
-                <PremiumCard className="flex flex-col space-y-6 relative overflow-hidden" delay={0.1}>
+                <PremiumCard className="flex flex-col space-y-6 relative overflow-hidden group border-emerald-100/30" delay={0.1}>
                     {integrations.shopify_api_key && (
                         <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-emerald-200">
-                            <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> Connected
+                            <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> Live & Connected
                         </div>
                     )}
 
                     <div className="flex items-center space-x-4 mb-2">
-                        <div className="p-3 bg-emerald-100 rounded-2xl">
-                            <ShoppingBag className="w-6 h-6 text-emerald-600" />
+                        <div className={`p-4 rounded-2xl transition-all duration-300 ${integrations.shopify_api_key ? 'bg-emerald-500 text-white' : 'bg-emerald-100 text-emerald-600'}`}>
+                            <ShoppingBag className="w-8 h-8" />
                         </div>
-                        <h2 className="text-xl font-black text-slate-900">Shopify Store</h2>
+                        <div>
+                            <h2 className="text-xl font-black text-slate-900">Shopify Store</h2>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Official Integration</p>
+                        </div>
                     </div>
 
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1 flex items-center justify-between">
-                                Admin Access Token
-                                <span className="text-[10px] lowercase font-normal italic">Find in Shopify Settings &rarr; Apps &rarr; Custom Apps</span>
-                            </label>
-                            <input
-                                type="password"
-                                value={shopifyKey}
-                                onChange={(e) => setShopifyKey(e.target.value)}
-                                placeholder="shpat_xxxxxxxxxxxxxxxxxxxxxxxx"
-                                className="block w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500/20 outline-none text-slate-700 font-medium transition-all"
-                            />
-                        </div>
-                        <PremiumButton
-                            onClick={handleSaveShopify}
-                            loading={saving.shopify}
-                            className="w-full h-12 shadow-emerald-100/50"
-                        >
-                            {integrations.shopify_api_key ? "Update Credentials" : "Connect Shopify"}
-                        </PremiumButton>
-                    </div>
+                    <div className="space-y-6">
+                        <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                            {integrations.shopify_api_key 
+                                ? `Your store (${integrations.shopify_shop || 'Connected'}) is currently syncing orders automatically.` 
+                                : "Connect your Shopify store in seconds. We'll automatically handle webhooks and order fulfillment syncing."}
+                        </p>
 
-                    <div className="pt-6 border-t border-slate-100 bg-slate-50/50 -mx-8 px-8 pb-4">
-                        <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center justify-between">
-                            <span className="flex items-center gap-2">Webhook URL <Link2 className="w-3 h-3 text-slate-400" /></span>
-                            <button
-                                onClick={() => copyToClipboard(`${displayApiUrl}/integrations/shopify/orders/${user?.id}`, 'shopify webhook')}
-                                className="text-indigo-600 hover:bg-indigo-50 p-1.5 rounded-lg transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider"
-                            >
-                                {copied === 'shopify webhook' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                Copy URL
-                            </button>
-                        </h3>
-                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4">
-                            <code className="text-[11px] font-mono text-indigo-600 break-all leading-relaxed block pr-2">
-                                {displayApiUrl}/integrations/shopify/orders/{user?.id}
-                            </code>
-                        </div>
-                        <div className="space-y-2">
-                            <p className="text-[10px] text-slate-500 font-bold flex items-start gap-2 leading-relaxed uppercase tracking-tighter">
-                                <AlertCircle className="w-3 h-3 mt-0.5 text-indigo-500" />
-                                Must paste this in Shopify &rarr; Notifications &rarr; Create Webhook (Order Creation) to receive orders.
-                            </p>
-                        </div>
+                        {!integrations.shopify_api_key ? (
+                            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={shopifyDomain}
+                                        onChange={(e) => setShopifyDomain(e.target.value)}
+                                        placeholder="your-store-name.myshopify.com"
+                                        className="block w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500/30 outline-none text-slate-700 font-bold transition-all"
+                                    />
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-emerald-500 uppercase">Input Required</div>
+                                </div>
+                                <PremiumButton
+                                    onClick={handleConnectShopify}
+                                    loading={saving.shopify}
+                                    className="w-full h-14 bg-emerald-600 hover:bg-emerald-500 shadow-xl shadow-emerald-200/50 text-base"
+                                >
+                                    <Zap className="w-4 h-4 fill-white mr-2" /> Connect My Store
+                                </PremiumButton>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping" />
+                                        <span className="text-sm font-bold text-emerald-700">Auto-Sync Active</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => setIntegrations({...integrations, shopify_api_key: null})}
+                                        className="text-[10px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-wider transition-colors"
+                                    >
+                                        Disconnect
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </PremiumCard>
 
                 {/* WooCommerce */}
-                <PremiumCard className="flex flex-col space-y-6 relative overflow-hidden" delay={0.2}>
-                    {integrations.wordpress_webhook && (
+                <PremiumCard className="flex flex-col space-y-6 relative overflow-hidden group border-blue-100/30" delay={0.2}>
+                    {integrations.wordpress_api_key && (
                         <div className="absolute top-4 right-4 flex items-center gap-1.5 px-2.5 py-1 bg-blue-500 text-white text-[9px] font-black uppercase tracking-widest rounded-full shadow-lg shadow-blue-200">
-                            <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> Webhook Set
+                            <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> Service Active
                         </div>
                     )}
 
                     <div className="flex items-center space-x-4 mb-2">
-                        <div className="p-3 bg-blue-100 rounded-2xl">
-                            <Globe className="w-6 h-6 text-blue-600" />
+                        <div className={`p-4 rounded-2xl transition-all duration-300 ${integrations.wordpress_api_key ? 'bg-blue-500 text-white' : 'bg-blue-100 text-blue-600'}`}>
+                            <Globe className="w-8 h-8" />
                         </div>
-                        <h2 className="text-xl font-black text-slate-900">WooCommerce</h2>
+                        <div>
+                            <h2 className="text-xl font-black text-slate-900">WooCommerce</h2>
+                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">WP Automation</p>
+                        </div>
                     </div>
 
-                    <div className="space-y-4">
-                        <div className="space-y-2">
-                            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest px-1">Site Domain (Optional)</label>
-                            <input
-                                type="text"
-                                value={wordpressWebhook}
-                                onChange={(e) => setWordpressWebhook(e.target.value)}
-                                placeholder="https://yourstore.com"
-                                className="block w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl focus:ring-2 focus:ring-indigo-500/20 outline-none text-slate-700 font-medium transition-all"
-                            />
-                        </div>
-                        <PremiumButton
-                            onClick={handleSaveWordpress}
-                            loading={saving.wordpress}
-                            className="w-full h-12 from-blue-600 to-indigo-600 shadow-blue-100"
-                        >
-                            {integrations.wordpress_webhook ? "Update Settings" : "Enable WooCommerce"}
-                        </PremiumButton>
-                    </div>
+                    <div className="space-y-6">
+                        <p className="text-sm text-slate-500 font-medium leading-relaxed">
+                            {integrations.wordpress_api_key 
+                                ? `Successfully connected to ${integrations.wordpress_site_url}. No further configuration needed.`
+                                : "Link your WordPress site using our secure application bridge. One-click authorization, no complex setup."}
+                        </p>
 
-                    <div className="pt-6 border-t border-slate-100 bg-slate-50/50 -mx-8 px-8 pb-4">
-                        <h3 className="text-sm font-bold text-slate-900 mb-3 flex items-center justify-between">
-                            <span className="flex items-center gap-2">Webhook URL <Link2 className="w-3 h-3 text-slate-400" /></span>
-                            <button
-                                onClick={() => copyToClipboard(`${displayApiUrl}/integrations/wordpress/orders/${user?.id}`, 'wp webhook')}
-                                className="text-blue-600 hover:bg-blue-50 p-1.5 rounded-lg transition-colors flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider"
-                            >
-                                {copied === 'wp webhook' ? <CheckCircle2 className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                Copy URL
-                            </button>
-                        </h3>
-                        <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm mb-4">
-                            <code className="text-[11px] font-mono text-blue-600 break-all leading-relaxed block">
-                                {displayApiUrl}/integrations/wordpress/orders/{user?.id}
-                            </code>
-                        </div>
-                        <div className="space-y-2">
-                            <p className="text-[10px] text-slate-500 font-bold flex items-start gap-2 leading-relaxed uppercase tracking-tighter">
-                                <AlertCircle className="w-3 h-3 mt-0.5 text-blue-500" />
-                                Paste in WordPress: WooCommerce &rarr; Settings &rarr; Advanced &rarr; Webhooks (Status: Order Created).
-                            </p>
-                        </div>
+                        {!integrations.wordpress_api_key ? (
+                            <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        value={wordpressUrl}
+                                        onChange={(e) => setWordpressUrl(e.target.value)}
+                                        placeholder="https://your-website.com"
+                                        className="block w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500/30 outline-none text-slate-700 font-bold transition-all"
+                                    />
+                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 text-[10px] font-black text-blue-500 uppercase">Site URL</div>
+                                </div>
+                                <PremiumButton
+                                    onClick={handleConnectWordpress}
+                                    loading={saving.wordpress}
+                                    className="w-full h-14 bg-blue-600 hover:bg-blue-500 shadow-xl shadow-blue-200/50 text-base"
+                                >
+                                    <ShieldCheck className="w-4 h-4 mr-2" /> Authorize with WordPress
+                                </PremiumButton>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-2 h-2 bg-blue-500 rounded-full animate-ping" />
+                                        <span className="text-sm font-bold text-blue-700">WP Bridge Online</span>
+                                    </div>
+                                    <button 
+                                        onClick={() => setIntegrations({...integrations, wordpress_api_key: null})}
+                                        className="text-[10px] font-black text-slate-400 hover:text-rose-500 uppercase tracking-wider transition-colors"
+                                    >
+                                        Revoke Access
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </PremiumCard>
 

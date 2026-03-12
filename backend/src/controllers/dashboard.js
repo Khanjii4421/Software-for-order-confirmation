@@ -1,15 +1,19 @@
-const prisma = require('../db');
+const { getDB } = require('../db');
 
 const getDashboardStats = async (req, res) => {
     try {
+        const db = getDB();
         const brandId = req.user.id;
+        const orders = db.collection('orders');
 
-        const totalOrders = await prisma.order.count({ where: { brand_id: brandId } });
-        const confirmedOrders = await prisma.order.count({ where: { brand_id: brandId, status: 'confirmed' } });
-        const cancelledOrders = await prisma.order.count({ where: { brand_id: brandId, status: 'cancelled' } });
-        const pendingOrders = await prisma.order.count({ where: { brand_id: brandId, status: 'pending' } });
+        const totalOrders = await orders.countDocuments({ brand_id: brandId });
+        const confirmedOrders = await orders.countDocuments({ brand_id: brandId, status: 'confirmed' });
+        const cancelledOrders = await orders.countDocuments({ brand_id: brandId, status: 'cancelled' });
+        const pendingOrders = await orders.countDocuments({ brand_id: brandId, status: 'pending' });
 
-        const confirmationRate = totalOrders > 0 ? ((confirmedOrders / totalOrders) * 100).toFixed(2) : 0;
+        const confirmationRate = totalOrders > 0
+            ? ((confirmedOrders / totalOrders) * 100).toFixed(2)
+            : 0;
 
         res.json({
             totalOrders,
